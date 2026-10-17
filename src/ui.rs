@@ -676,6 +676,7 @@ impl ClipboardWindow {
     }
 
     pub fn present_and_focus(self: &Rc<Self>) {
+        crate::window_tracker::WindowTracker::global().snapshot_active_window();
         self.search_entry.set_text("");
         self.refresh_data();
         self.window.present();

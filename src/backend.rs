@@ -303,8 +303,10 @@ impl Backend {
             }
         }
 
+        let is_terminal = crate::window_tracker::WindowTracker::global().is_terminal_focused();
+
         // Auto-paste trigger after focus restoration in background
-        thread::spawn(|| {
+        thread::spawn(move || {
             // Give compositor 120ms to unmap clipboard window and return active focus to target app
             thread::sleep(Duration::from_millis(120));
 
@@ -317,7 +319,13 @@ impl Backend {
 
             // 1. ydotool with key delay -d 15 so key-down and key-up are properly processed by event loops
             let mut ydo_cmd = Command::new("ydotool");
-            ydo_cmd.args(["key", "-d", "15", "29:1", "47:1", "47:0", "29:0"]);
+            if is_terminal {
+                // Terminals require Ctrl + Shift + V (Keycodes: 29 = Ctrl, 42 = Shift, 47 = V)
+                ydo_cmd.args(["key", "-d", "15", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]);
+            } else {
+                // Standard GUI apps require Ctrl + V (Keycodes: 29 = Ctrl, 47 = V)
+                ydo_cmd.args(["key", "-d", "15", "29:1", "47:1", "47:0", "29:0"]);
+            }
             for (k, v) in &ydotool_env {
                 ydo_cmd.env(k, v);
             }
@@ -328,9 +336,13 @@ impl Backend {
             }
 
             // 2. wtype fallback with delay
-            let _ = Command::new("wtype")
-                .args(["-M", "ctrl", "-d", "20", "-k", "v", "-m", "ctrl"])
-                .output();
+            let mut wtype_cmd = Command::new("wtype");
+            if is_terminal {
+                wtype_cmd.args(["-M", "ctrl", "-M", "shift", "-d", "20", "-k", "v", "-m", "shift", "-m", "ctrl"]);
+            } else {
+                wtype_cmd.args(["-M", "ctrl", "-d", "20", "-k", "v", "-m", "ctrl"]);
+            }
+            let _ = wtype_cmd.output();
         });
     }
 }

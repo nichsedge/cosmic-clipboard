@@ -1,6 +1,7 @@
 mod backend;
 mod theme;
 mod ui;
+pub mod window_tracker;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -9,6 +10,7 @@ use gio::prelude::*;
 
 use theme::DesktopEnvironment;
 use ui::ClipboardWindow;
+use window_tracker::WindowTracker;
 
 const APP_ID: &str = "dev.nichsedge.cosmic.clipboard";
 
@@ -27,6 +29,9 @@ fn main() -> glib::ExitCode {
         app.connect_startup(move |app| {
             // Keep process resident so hotkey activations are instant (< 2ms)
             *hold_guard.borrow_mut() = Some(app.hold());
+
+            // Initialize active window tracking for terminal auto-paste detection
+            WindowTracker::global();
 
             let de = DesktopEnvironment::current();
             let css = theme::get_css(de);
