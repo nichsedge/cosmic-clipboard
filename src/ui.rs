@@ -37,16 +37,9 @@ struct RowItem {
     kind: ContentKind,
 }
 
-#[derive(Clone)]
-struct HeaderItem {
-    row: gtk4::ListBoxRow,
-}
-
 struct AppState {
     entries: Vec<RingboardEntry>,
     items: Vec<RowItem>,
-    fav_header: Option<HeaderItem>,
-    reg_header: Option<HeaderItem>,
     search_query: String,
     active_category: FilterCategory,
     texture_cache: HashMap<u64, gdk4::Texture>,
@@ -205,8 +198,6 @@ impl ClipboardWindow {
         let state = Rc::new(RefCell::new(AppState {
             entries: Vec::new(),
             items: Vec::new(),
-            fav_header: None,
-            reg_header: None,
             search_query: String::new(),
             active_category: FilterCategory::All,
             texture_cache: HashMap::new(),
@@ -222,12 +213,50 @@ impl ClipboardWindow {
             _de: de,
         });
 
+        win_ref.setup_headers();
         win_ref.setup_filtering();
         win_ref.setup_category_clicks();
         win_ref.setup_keybindings();
         win_ref.setup_actions(clear_btn);
 
         win_ref
+    }
+
+    fn setup_headers(&self) {
+        self.list_box.set_header_func(|row, before| {
+            let is_fav = row.widget_name() == "fav";
+            let prev_is_fav = before.map(|b| b.widget_name() == "fav");
+
+            let show_header = match prev_is_fav {
+                None => true, // First visible row in list
+                Some(prev_fav) => is_fav != prev_fav, // Transition boundary between fav and reg
+            };
+
+            if show_header {
+                let title = if is_fav { "⭐ FAVORITES" } else { "🕒 RECENT HISTORY" };
+                let need_new = match row.header() {
+                    Some(ref w) => {
+                        if let Some(lbl) = w.downcast_ref::<gtk4::Label>() {
+                            lbl.set_label(title);
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    None => true,
+                };
+                if need_new {
+                    let lbl = gtk4::Label::builder()
+                        .label(title)
+                        .xalign(0.0)
+                        .build();
+                    lbl.add_css_class("section-title");
+                    row.set_header(Some(&lbl));
+                }
+            } else {
+                row.set_header(gtk4::Widget::NONE);
+            }
+        });
     }
 
     fn setup_filtering(&self) {
@@ -238,35 +267,6 @@ impl ClipboardWindow {
             let query = &state.search_query;
             let active_cat = state.active_category;
 
-            // Check if it's the favorites header
-            if let Some(ref fh) = state.fav_header {
-                if fh.row == *row {
-                    if active_cat != FilterCategory::All && active_cat != FilterCategory::Favorites {
-                        return false;
-                    }
-                    return state.items.iter().any(|item| {
-                        item.is_fav
-                            && item_matches_category(item, active_cat)
-                            && (query.is_empty() || item.search_text.contains(query))
-                    });
-                }
-            }
-
-            // Check if it's the regular header
-            if let Some(ref rh) = state.reg_header {
-                if rh.row == *row {
-                    if active_cat == FilterCategory::Favorites {
-                        return false;
-                    }
-                    return state.items.iter().any(|item| {
-                        !item.is_fav
-                            && item_matches_category(item, active_cat)
-                            && (query.is_empty() || item.search_text.contains(query))
-                    });
-                }
-            }
-
-            // Check item rows
             for item in &state.items {
                 if item.row == *row {
                     let cat_match = item_matches_category(item, active_cat);
@@ -275,7 +275,7 @@ impl ClipboardWindow {
                 }
             }
 
-            true
+            false
         });
 
         let this = self.state.clone();
@@ -497,10 +497,20 @@ impl ClipboardWindow {
                 }
             }
 
-            // 10. Up navigation returns focus to search entry if at top
+            // 10. Up navigation returns focus to search entry if at first visible item
             if !this.search_entry.has_focus() && key_name == "Up" {
                 if let Some(selected) = this.list_box.selected_row() {
-                    if selected.index() <= 1 {
+                    let state = this.state.borrow();
+                    let query = &state.search_query;
+                    let active_cat = state.active_category;
+                    let is_first_visible = state
+                        .items
+                        .iter()
+                        .find(|it| item_matches_category(it, active_cat) && (query.is_empty() || it.search_text.contains(query)))
+                        .map(|it| it.row == selected)
+                        .unwrap_or(false);
+                    drop(state);
+                    if is_first_visible {
                         this.search_entry.grab_focus();
                         return glib::Propagation::Stop;
                     }
@@ -563,35 +573,11 @@ impl ClipboardWindow {
         }
 
         let mut items = Vec::new();
-        let mut fav_header = None;
-        let mut reg_header = None;
-
-        let has_favs = entries.iter().any(|e| e.favorite);
-        let _has_reg = entries.iter().any(|e| !e.favorite);
-
-        let mut displayed_fav_h = false;
-        let mut displayed_reg_h = false;
 
         for (i, entry) in entries.iter().enumerate() {
             let is_fav = entry.favorite;
-
-            if is_fav && !displayed_fav_h {
-                let h_row = self.create_header_row("⭐ FAVORITES", "favs");
-                self.list_box.append(&h_row);
-                fav_header = Some(HeaderItem {
-                    row: h_row,
-                });
-                displayed_fav_h = true;
-            } else if !is_fav && has_favs && !displayed_reg_h {
-                let h_row = self.create_header_row("🕒 RECENT HISTORY", "regular");
-                self.list_box.append(&h_row);
-                reg_header = Some(HeaderItem {
-                    row: h_row,
-                });
-                displayed_reg_h = true;
-            }
-
             let (row, search_text, kind) = self.create_entry_row(i + 1, entry);
+            row.set_widget_name(if is_fav { "fav" } else { "reg" });
             self.list_box.append(&row);
 
             items.push(RowItem {
@@ -607,8 +593,6 @@ impl ClipboardWindow {
             let mut state = self.state.borrow_mut();
             state.entries = entries;
             state.items = items;
-            state.fav_header = fav_header;
-            state.reg_header = reg_header;
         }
 
         let query = self.search_entry.text().trim().to_lowercase();
@@ -637,20 +621,6 @@ impl ClipboardWindow {
             format!("{} items (filtered from {})", visible_count, state.items.len())
         };
         self.count_label.set_text(&msg);
-    }
-
-    fn create_header_row(&self, title: &str, _section: &str) -> gtk4::ListBoxRow {
-        let row = gtk4::ListBoxRow::builder()
-            .selectable(false)
-            .activatable(false)
-            .build();
-        let lbl = gtk4::Label::builder()
-            .label(title)
-            .xalign(0.0)
-            .build();
-        lbl.add_css_class("section-title");
-        row.set_child(Some(&lbl));
-        row
     }
 
     fn create_entry_row(self: &Rc<Self>, index: usize, entry: &RingboardEntry) -> (gtk4::ListBoxRow, String, ContentKind) {
