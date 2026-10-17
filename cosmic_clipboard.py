@@ -148,57 +148,57 @@ class ClipboardBackend:
     """Interfaces with Ringboard daemon and system clipboard."""
 
     @staticmethod
-    def sync_active_clipboard():
-        """Ensures any recent text or image on Wayland clipboard or GNOME extension is ingested."""
-        # 1. Sync from GNOME extension log if present
-        gnome_log = os.path.expanduser("~/.cache/clipboard-history@alexsaveau.dev/database.log")
-        if os.path.exists(gnome_log):
-            try:
-                subprocess.run(
-                    ["ringboard", "import", "gnome-clipboard-history"],
-                    capture_output=True,
-                    timeout=0.6
-                )
-            except Exception:
-                pass
+    def is_wayland_watcher_active() -> bool:
+        """Checks if ringboard-wayland daemon is running."""
+        try:
+            res = subprocess.run(["pgrep", "-f", "ringboard-wayland"], capture_output=True)
+            return res.returncode == 0
+        except Exception:
+            return False
 
-        # 2. Check if current clipboard has image
+    @staticmethod
+    def sync_active_clipboard():
+        """Only sync active clipboard if ringboard-wayland is NOT actively watching."""
+        if ClipboardBackend.is_wayland_watcher_active():
+            return
+
+        # Fallback for desktop sessions without active Wayland data-control watcher (e.g. GNOME Wayland)
         try:
             img_res = subprocess.run(
                 ["wl-paste", "--type", "image"],
                 capture_output=True,
-                timeout=0.4
+                timeout=0.3
             )
             if img_res.returncode == 0 and len(img_res.stdout) > 0:
                 subprocess.run(
                     ["ringboard", "add", "-m", "image/png", "-"],
                     input=img_res.stdout,
                     capture_output=True,
-                    timeout=0.8
+                    timeout=0.5
                 )
+                return
         except Exception:
             pass
 
-        # 3. Check if current clipboard has text
         try:
             txt_res = subprocess.run(
                 ["wl-paste", "--type", "text"],
                 capture_output=True,
-                timeout=0.4
+                timeout=0.3
             )
             if txt_res.returncode == 0 and len(txt_res.stdout) > 0:
                 subprocess.run(
                     ["ringboard", "add", "-"],
                     input=txt_res.stdout,
                     capture_output=True,
-                    timeout=0.8
+                    timeout=0.5
                 )
         except Exception:
             pass
 
     @staticmethod
     def get_entries() -> List[Dict[str, Any]]:
-        """Dumps all entries from ringboard."""
+        """Dumps all entries from ringboard, deduplicated by content, with favorites prioritized."""
         ClipboardBackend.sync_active_clipboard()
         try:
             p = subprocess.run(
@@ -208,31 +208,107 @@ class ClipboardBackend:
                 check=True,
                 timeout=2.0
             )
-            entries = json.loads(p.stdout)
-            # Tag whether it's favorite
-            for e in entries:
-                e["favorite"] = (e.get("id", 0) < FAVORITE_THRESHOLD)
-            return entries
+            raw_entries = json.loads(p.stdout)
+
+            # Separate into favorites and regular
+            favs_raw = []
+            reg_raw = []
+            for e in raw_entries:
+                is_fav = (e.get("id", 0) < FAVORITE_THRESHOLD)
+                e["favorite"] = is_fav
+                if is_fav:
+                    favs_raw.append(e)
+                else:
+                    reg_raw.append(e)
+
+            # Sort both descending by ID (newest first)
+            favs_raw.sort(key=lambda x: x.get("id", 0), reverse=True)
+            reg_raw.sort(key=lambda x: x.get("id", 0), reverse=True)
+
+            # Deduplicate favorites (keep newest instance of unique content)
+            unique_favs = []
+            fav_content_set = set()
+            for e in favs_raw:
+                content_key = (e.get("kind"), e.get("mime_type", ""), e.get("data"))
+                if content_key not in fav_content_set:
+                    fav_content_set.add(content_key)
+                    unique_favs.append(e)
+
+            # Deduplicate regular entries and exclude items already in favorites
+            unique_reg = []
+            reg_content_set = set()
+            for e in reg_raw:
+                content_key = (e.get("kind"), e.get("mime_type", ""), e.get("data"))
+                if content_key in fav_content_set:
+                    continue  # Pinned items belong exclusively in Favorites section
+                if content_key not in reg_content_set:
+                    reg_content_set.add(content_key)
+                    unique_reg.append(e)
+
+            return unique_favs + unique_reg
         except Exception as err:
             print(f"[ClipboardBackend] Error dumping entries: {err}", file=sys.stderr)
             return []
 
     @staticmethod
-    def toggle_favorite(entry_id: int, is_favorite: bool):
-        """Favorites or unfavorites an entry."""
-        cmd = ["ringboard", "unfavorite" if is_favorite else "favorite", str(entry_id)]
+    def toggle_favorite(entry: Dict[str, Any]) -> bool:
+        """Favorites or unfavorites an entry with ID fallback and duplicate cleanup."""
+        entry_id = entry.get("id")
+        is_favorite = entry.get("favorite", False)
+        data = entry.get("data")
+        action = "unfavorite" if is_favorite else "favorite"
+        cmd = ["ringboard", action, str(entry_id)]
+
         try:
-            subprocess.run(cmd, capture_output=True, check=True)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.0)
+            success = (res.returncode == 0)
+
+            # If ID was not found, attempt to locate current ID by data
+            if not success and data:
+                dump = subprocess.run(["ringboard", "debug", "dump"], capture_output=True, text=True, timeout=1.0)
+                if dump.returncode == 0:
+                    for ce in json.loads(dump.stdout):
+                        if ce.get("data") == data:
+                            new_id = ce.get("id")
+                            if new_id and new_id != entry_id:
+                                retry = subprocess.run(["ringboard", action, str(new_id)], capture_output=True, text=True, timeout=1.0)
+                                if retry.returncode == 0:
+                                    success = True
+                                    break
+
+            # If unfavoriting, remove any leftover duplicate favorites with the same content
+            if is_favorite and data:
+                dump = subprocess.run(["ringboard", "debug", "dump"], capture_output=True, text=True, timeout=1.0)
+                if dump.returncode == 0:
+                    for ce in json.loads(dump.stdout):
+                        if ce.get("id", 0) < FAVORITE_THRESHOLD and ce.get("data") == data:
+                            subprocess.run(["ringboard", "remove", str(ce.get("id"))], capture_output=True)
+
+            return success
         except Exception as err:
             print(f"[ClipboardBackend] Error toggling favorite: {err}", file=sys.stderr)
+            return False
 
     @staticmethod
-    def remove(entry_id: int):
-        """Removes an entry from database."""
+    def remove(entry: Dict[str, Any]) -> bool:
+        """Removes an entry from database with fallback."""
+        entry_id = entry.get("id")
+        data = entry.get("data")
         try:
-            subprocess.run(["ringboard", "remove", str(entry_id)], capture_output=True, check=True)
+            res = subprocess.run(["ringboard", "remove", str(entry_id)], capture_output=True, timeout=1.0)
+            if res.returncode == 0:
+                return True
+            if data:
+                dump = subprocess.run(["ringboard", "debug", "dump"], capture_output=True, text=True, timeout=1.0)
+                if dump.returncode == 0:
+                    for ce in json.loads(dump.stdout):
+                        if ce.get("data") == data:
+                            subprocess.run(["ringboard", "remove", str(ce.get("id"))], capture_output=True)
+                            return True
+            return False
         except Exception as err:
             print(f"[ClipboardBackend] Error removing entry: {err}", file=sys.stderr)
+            return False
 
     @staticmethod
     def clear_history(entries: Optional[List[Dict[str, Any]]] = None):
@@ -412,13 +488,14 @@ class ClipboardWindow(Adw.ApplicationWindow):
             self.set_visible(False)
             return True
 
-        # Ctrl + 1..9 quick pick
+        # Quick pick 1..9 (with Ctrl or when search entry is not focused)
         ctrl_pressed = (state & Gdk.ModifierType.CONTROL_MASK) != 0
-        if ctrl_pressed and key_name in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]:
-            idx = int(key_name) - 1
-            if idx < len(self.visible_rows):
-                self._on_row_activated(self.list_box, self.visible_rows[idx])
-                return True
+        if key_name in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]:
+            if ctrl_pressed or not self.search_entry.has_focus():
+                idx = int(key_name) - 1
+                if idx < len(self.visible_rows):
+                    self._on_row_activated(self.list_box, self.visible_rows[idx])
+                    return True
 
         # Ctrl + R reloads
         if ctrl_pressed and key_name in ["r", "R"]:
@@ -465,13 +542,6 @@ class ClipboardWindow(Adw.ApplicationWindow):
     def refresh_data(self):
         """Reloads entries from Ringboard backend."""
         self.entries = self.backend.get_entries()
-        # Sort: favorites first, then newest first (highest ID first)
-        favs = [e for e in self.entries if e.get("favorite")]
-        regular = [e for e in self.entries if not e.get("favorite")]
-        favs.sort(key=lambda x: x.get("id", 0), reverse=True)
-        regular.sort(key=lambda x: x.get("id", 0), reverse=True)
-
-        self.entries = favs + regular
         self._filter_and_render()
 
     def _on_search_changed(self, entry):
@@ -643,14 +713,11 @@ class ClipboardWindow(Adw.ApplicationWindow):
         self.backend.copy_to_clipboard(entry)
 
     def _toggle_favorite(self, entry: Dict[str, Any]):
-        entry_id = entry.get("id")
-        is_fav = entry.get("favorite", False)
-        self.backend.toggle_favorite(entry_id, is_fav)
+        self.backend.toggle_favorite(entry)
         self.refresh_data()
 
     def _delete_entry(self, entry: Dict[str, Any]):
-        entry_id = entry.get("id")
-        self.backend.remove(entry_id)
+        self.backend.remove(entry)
         self.refresh_data()
 
     def _on_clear_clicked(self, btn):
