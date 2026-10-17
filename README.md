@@ -15,13 +15,25 @@ A native, high-performance GTK4 / Libadwaita / Wayland clipboard history manager
 - ⭐ **Pinned / Favorites**: Pin frequently used snippets or credentials to a dedicated "⭐ FAVORITES" section at the top.
 - 🧹 **Selective Clear History**: Cleans all unpinned history items via parallel deletion, keeping pinned entries completely safe.
 - 🔍 **Live Search**: Instant in-memory C-level filtering without widget reallocation.
+- 🏷️ **Category Filter Pills**:
+  - Horizontal filter tabs: `All`, `⭐ Pinned`, `📝 Text`, `💻 Code`, `🔗 Links`, `🖼️ Images`.
+  - Instant keyboard shortcuts: `Alt + 1..6` for lightning-fast tab switching.
+- 🎨 **Rich Previews & Visual Highlighting**:
+  - **Live Color Swatches**: Renders a live color pill next to any hex color code (`#RRGGBB` / `#RGB`).
+  - **URL & Domain Badges**: Identifies links and displays clean domain badges (`🌐 github.com`).
+  - **Code Highlighting**: Auto-detects code snippets/commands and renders them in monospace (`💻 Code`).
+  - **Metadata Summary**: Character counts and line indicators for multi-line snippets.
+- 📟 **Smart Terminal Auto-Paste**:
+  - Dynamic Wayland toplevel tracker via `cosmic-protocols` (`zcosmic_toplevel_info_v1`) and `niri msg -j focused-window`.
+  - Automatically detects terminal emulators (`cosmic-term`, `ghostty`, `alacritty`, `kitty`, `ptyxis`, `foot`, `wezterm`) and injects `Ctrl + Shift + V` with an unmap focus delay, while using `Ctrl + V` for regular GUI apps.
 - ⌨️ **Keyboard Navigation**:
-  - `Enter` / `Return`: Copy selected item and auto-paste into active window via `ydotool` / `wtype` (40ms).
+  - `Enter` / `Return`: Copy selected item and auto-paste into active window via `ydotool` / `wtype`.
   - `1..9` / `Ctrl + 1..9`: Instantly pick and paste the N-th visible entry.
-  - `Down` / `Up`: Navigate rows.
+  - `Alt + 1..6`: Instant category filter switching (`All`, `Pinned`, `Text`, `Code`, `Links`, `Images`).
+  - `Down` / `Up`: Navigate rows (or jump from search bar to list).
   - `F`: Toggle favorite / pin.
   - `Delete` / `Backspace`: Remove entry.
-  - `Esc`: Close window.
+  - `Esc`: Close window (window-level capture phase intercepting search bar focus).
   - `/`: Focus search input.
   - `Ctrl + R`: Refresh history.
 

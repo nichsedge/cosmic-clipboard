@@ -9,12 +9,32 @@ use libadwaita::prelude::*;
 use crate::backend::{Backend, RingboardEntry};
 use crate::theme::DesktopEnvironment;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterCategory {
+    All,
+    Favorites,
+    Text,
+    Code,
+    Links,
+    Images,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentKind {
+    Image,
+    Color,
+    Url,
+    Code,
+    Text,
+}
+
 #[derive(Clone)]
 struct RowItem {
     entry: RingboardEntry,
     row: gtk4::ListBoxRow,
     search_text: String,
     is_fav: bool,
+    kind: ContentKind,
 }
 
 #[derive(Clone)]
@@ -28,6 +48,7 @@ struct AppState {
     fav_header: Option<HeaderItem>,
     reg_header: Option<HeaderItem>,
     search_query: String,
+    active_category: FilterCategory,
     texture_cache: HashMap<u64, gdk4::Texture>,
 }
 
@@ -36,6 +57,7 @@ pub struct ClipboardWindow {
     list_box: gtk4::ListBox,
     search_entry: gtk4::SearchEntry,
     count_label: gtk4::Label,
+    filter_buttons: Vec<(FilterCategory, gtk4::Button)>,
     state: Rc<RefCell<AppState>>,
     _de: DesktopEnvironment,
 }
@@ -47,7 +69,7 @@ impl ClipboardWindow {
         let window = libadwaita::ApplicationWindow::builder()
             .application(app)
             .title("Clipboard History")
-            .default_width(530)
+            .default_width(540)
             .default_height(620)
             .hide_on_close(true)
             .build();
@@ -113,13 +135,40 @@ impl ClipboardWindow {
         search_box.append(&search_entry);
         main_box.append(&search_box);
 
-        // 3. Scrolled List
+        // 3. Category Filter Pills
+        let filter_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        filter_bar.add_css_class("filter-bar");
+
+        let categories = [
+            (FilterCategory::All, "All"),
+            (FilterCategory::Favorites, "⭐ Pinned"),
+            (FilterCategory::Text, "📝 Text"),
+            (FilterCategory::Code, "💻 Code"),
+            (FilterCategory::Links, "🔗 Links"),
+            (FilterCategory::Images, "🖼️ Images"),
+        ];
+
+        let mut filter_buttons = Vec::new();
+        for (cat, label) in categories {
+            let btn = gtk4::Button::builder()
+                .label(label)
+                .build();
+            btn.add_css_class("filter-pill");
+            if cat == FilterCategory::All {
+                btn.add_css_class("active");
+            }
+            filter_bar.append(&btn);
+            filter_buttons.push((cat, btn));
+        }
+        main_box.append(&filter_bar);
+
+        // 4. Scrolled List
         let scrolled = gtk4::ScrolledWindow::builder()
             .hscrollbar_policy(gtk4::PolicyType::Never)
             .vscrollbar_policy(gtk4::PolicyType::Automatic)
             .hexpand(true)
             .vexpand(true)
-            .min_content_width(530)
+            .min_content_width(540)
             .min_content_height(480)
             .build();
 
@@ -129,7 +178,7 @@ impl ClipboardWindow {
         scrolled.set_child(Some(&list_box));
         main_box.append(&scrolled);
 
-        // 4. Footer Bar
+        // 5. Footer Bar
         let bottom_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
         bottom_box.add_css_class("bottom-bar");
 
@@ -137,7 +186,7 @@ impl ClipboardWindow {
         count_label.add_css_class("footer-hint");
         bottom_box.append(&count_label);
 
-        let hint_lbl = gtk4::Label::new(Some("↵ Paste  •  1-9 Quick Pick  •  F Favorite  •  ⌫ Del  •  Esc Close"));
+        let hint_lbl = gtk4::Label::new(Some("↵ Paste  •  1-9 Pick  •  F Pin  •  Alt+1-6 Tabs  •  Esc Close"));
         hint_lbl.add_css_class("footer-hint");
         hint_lbl.set_hexpand(true);
         hint_lbl.set_halign(gtk4::Align::Center);
@@ -159,6 +208,7 @@ impl ClipboardWindow {
             fav_header: None,
             reg_header: None,
             search_query: String::new(),
+            active_category: FilterCategory::All,
             texture_cache: HashMap::new(),
         }));
 
@@ -167,11 +217,13 @@ impl ClipboardWindow {
             list_box,
             search_entry,
             count_label,
+            filter_buttons,
             state,
             _de: de,
         });
 
         win_ref.setup_filtering();
+        win_ref.setup_category_clicks();
         win_ref.setup_keybindings();
         win_ref.setup_actions(clear_btn);
 
@@ -184,28 +236,42 @@ impl ClipboardWindow {
         self.list_box.set_filter_func(move |row| {
             let state = state_clone.borrow();
             let query = &state.search_query;
-            if query.is_empty() {
-                return true;
-            }
+            let active_cat = state.active_category;
 
             // Check if it's the favorites header
             if let Some(ref fh) = state.fav_header {
                 if fh.row == *row {
-                    return state.items.iter().any(|item| item.is_fav && item.search_text.contains(query));
+                    if active_cat != FilterCategory::All && active_cat != FilterCategory::Favorites {
+                        return false;
+                    }
+                    return state.items.iter().any(|item| {
+                        item.is_fav
+                            && item_matches_category(item, active_cat)
+                            && (query.is_empty() || item.search_text.contains(query))
+                    });
                 }
             }
 
             // Check if it's the regular header
             if let Some(ref rh) = state.reg_header {
                 if rh.row == *row {
-                    return state.items.iter().any(|item| !item.is_fav && item.search_text.contains(query));
+                    if active_cat == FilterCategory::Favorites {
+                        return false;
+                    }
+                    return state.items.iter().any(|item| {
+                        !item.is_fav
+                            && item_matches_category(item, active_cat)
+                            && (query.is_empty() || item.search_text.contains(query))
+                    });
                 }
             }
 
             // Check item rows
             for item in &state.items {
                 if item.row == *row {
-                    return item.search_text.contains(query);
+                    let cat_match = item_matches_category(item, active_cat);
+                    let query_match = query.is_empty() || item.search_text.contains(query);
+                    return cat_match && query_match;
                 }
             }
 
@@ -223,23 +289,24 @@ impl ClipboardWindow {
             list_box.invalidate_filter();
 
             let state = this.borrow();
+            let active_cat = state.active_category;
             let visible_count = state
                 .items
                 .iter()
-                .filter(|it| text.is_empty() || it.search_text.contains(&text))
+                .filter(|it| item_matches_category(it, active_cat) && (text.is_empty() || it.search_text.contains(&text)))
                 .count();
 
             // Select first visible row
             if let Some(first_visible) = state
                 .items
                 .iter()
-                .find(|it| text.is_empty() || it.search_text.contains(&text))
+                .find(|it| item_matches_category(it, active_cat) && (text.is_empty() || it.search_text.contains(&text)))
             {
                 list_box.select_row(Some(&first_visible.row));
             }
 
             let msg = if text.is_empty() {
-                format!("{} items", state.items.len())
+                format!("{} items", visible_count)
             } else {
                 format!("{} items (filtered from {})", visible_count, state.items.len())
             };
@@ -247,35 +314,101 @@ impl ClipboardWindow {
         });
     }
 
+    fn setup_category_clicks(self: &Rc<Self>) {
+        for (cat, btn) in &self.filter_buttons {
+            let this = Rc::clone(self);
+            let target_cat = *cat;
+            btn.connect_clicked(move |_| {
+                this.select_category(target_cat);
+            });
+        }
+    }
+
+    pub fn select_category(self: &Rc<Self>, target_cat: FilterCategory) {
+        self.state.borrow_mut().active_category = target_cat;
+
+        for (cat, btn) in &self.filter_buttons {
+            if *cat == target_cat {
+                btn.add_css_class("active");
+            } else {
+                btn.remove_css_class("active");
+            }
+        }
+
+        self.list_box.invalidate_filter();
+
+        let state = self.state.borrow();
+        let query = &state.search_query;
+        let visible_count = state
+            .items
+            .iter()
+            .filter(|it| item_matches_category(it, target_cat) && (query.is_empty() || it.search_text.contains(query)))
+            .count();
+
+        if let Some(first_visible) = state
+            .items
+            .iter()
+            .find(|it| item_matches_category(it, target_cat) && (query.is_empty() || it.search_text.contains(query)))
+        {
+            self.list_box.select_row(Some(&first_visible.row));
+        }
+
+        let msg = format!("{} items", visible_count);
+        self.count_label.set_text(&msg);
+    }
+
     fn setup_keybindings(self: &Rc<Self>) {
         let key_controller = gtk4::EventControllerKey::new();
+        // CAPTURE phase intercepts key events at the window root before any child widget consumes them
+        key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
 
         let this = Rc::clone(self);
         key_controller.connect_key_pressed(move |_, keyval, _, state| {
             let key_name = keyval.name().map(|n| n.to_string()).unwrap_or_default();
             let ctrl = (state & gdk4::ModifierType::CONTROL_MASK) == gdk4::ModifierType::CONTROL_MASK;
+            let alt = (state & gdk4::ModifierType::ALT_MASK) == gdk4::ModifierType::ALT_MASK;
 
+            // 1. ESCAPE: Immediately close window from anywhere
             if key_name == "Escape" {
                 this.window.set_visible(false);
                 return glib::Propagation::Stop;
             }
 
+            // 2. Ctrl + R: Reload history
             if ctrl && (key_name == "r" || key_name == "R") {
                 this.refresh_data();
                 return glib::Propagation::Stop;
             }
 
-            // 1..9 Quick pick (with Ctrl or when search entry is not focused)
+            // 3. Alt + 1..6: Category tab switching
+            if alt {
+                let cat_opt = match key_name.as_str() {
+                    "1" => Some(FilterCategory::All),
+                    "2" => Some(FilterCategory::Favorites),
+                    "3" => Some(FilterCategory::Text),
+                    "4" => Some(FilterCategory::Code),
+                    "5" => Some(FilterCategory::Links),
+                    "6" => Some(FilterCategory::Images),
+                    _ => None,
+                };
+                if let Some(cat) = cat_opt {
+                    this.select_category(cat);
+                    return glib::Propagation::Stop;
+                }
+            }
+
+            // 4. 1..9 Quick pick (with Ctrl or when search entry is not focused)
             if let Some(digit) = key_name.chars().next() {
                 if digit.is_ascii_digit() && digit != '0' {
                     if ctrl || !this.search_entry.has_focus() {
                         let idx = (digit as usize) - ('1' as usize);
                         let query = this.state.borrow().search_query.clone();
+                        let active_cat = this.state.borrow().active_category;
                         let state = this.state.borrow();
                         let visible_items: Vec<_> = state
                             .items
                             .iter()
-                            .filter(|it| query.is_empty() || it.search_text.contains(&query))
+                            .filter(|it| item_matches_category(it, active_cat) && (query.is_empty() || it.search_text.contains(&query)))
                             .collect();
 
                         if idx < visible_items.len() {
@@ -289,17 +422,18 @@ impl ClipboardWindow {
                 }
             }
 
-            // Focus search with '/'
+            // 5. '/' focuses search entry
             if key_name == "slash" && !this.search_entry.has_focus() {
                 this.search_entry.grab_focus();
                 return glib::Propagation::Stop;
             }
 
-            // Enter activates
+            // 6. Enter activates
             if key_name == "Return" || key_name == "KP_Enter" {
                 let selected = this.list_box.selected_row();
                 let state = this.state.borrow();
                 let query = state.search_query.clone();
+                let active_cat = state.active_category;
 
                 let to_activate = if let Some(ref sel) = selected {
                     state.items.iter().find(|it| it.row == *sel).map(|it| it.entry.clone())
@@ -307,7 +441,7 @@ impl ClipboardWindow {
                     state
                         .items
                         .iter()
-                        .find(|it| query.is_empty() || it.search_text.contains(&query))
+                        .find(|it| item_matches_category(it, active_cat) && (query.is_empty() || it.search_text.contains(&query)))
                         .map(|it| it.entry.clone())
                 };
 
@@ -319,7 +453,7 @@ impl ClipboardWindow {
                 }
             }
 
-            // Delete / Backspace removes item (when search entry is not focused)
+            // 7. Delete / Backspace removes item (when search entry is not focused)
             if (key_name == "Delete" || key_name == "BackSpace") && !this.search_entry.has_focus() {
                 if let Some(selected) = this.list_box.selected_row() {
                     let state = this.state.borrow();
@@ -333,7 +467,7 @@ impl ClipboardWindow {
                 }
             }
 
-            // F favorites (when search entry is not focused)
+            // 8. F favorites (when search entry is not focused)
             if (key_name == "f" || key_name == "F") && !this.search_entry.has_focus() {
                 if let Some(selected) = this.list_box.selected_row() {
                     let state = this.state.borrow();
@@ -347,14 +481,15 @@ impl ClipboardWindow {
                 }
             }
 
-            // Down navigation from search entry
+            // 9. Down navigation from search entry
             if this.search_entry.has_focus() && key_name == "Down" {
                 let state = this.state.borrow();
                 let query = state.search_query.clone();
+                let active_cat = state.active_category;
                 if let Some(first_visible) = state
                     .items
                     .iter()
-                    .find(|it| query.is_empty() || it.search_text.contains(&query))
+                    .find(|it| item_matches_category(it, active_cat) && (query.is_empty() || it.search_text.contains(&query)))
                 {
                     this.list_box.select_row(Some(&first_visible.row));
                     first_visible.row.grab_focus();
@@ -362,10 +497,26 @@ impl ClipboardWindow {
                 }
             }
 
+            // 10. Up navigation returns focus to search entry if at top
+            if !this.search_entry.has_focus() && key_name == "Up" {
+                if let Some(selected) = this.list_box.selected_row() {
+                    if selected.index() <= 1 {
+                        this.search_entry.grab_focus();
+                        return glib::Propagation::Stop;
+                    }
+                }
+            }
+
             glib::Propagation::Proceed
         });
 
         self.window.add_controller(key_controller);
+
+        // Also connect stop-search on the SearchEntry to dismiss window immediately on Escape
+        let win_clone = self.window.clone();
+        self.search_entry.connect_stop_search(move |_| {
+            win_clone.set_visible(false);
+        });
     }
 
     fn setup_actions(self: &Rc<Self>, clear_btn: gtk4::Button) {
@@ -440,7 +591,7 @@ impl ClipboardWindow {
                 displayed_reg_h = true;
             }
 
-            let (row, search_text) = self.create_entry_row(i + 1, entry);
+            let (row, search_text, kind) = self.create_entry_row(i + 1, entry);
             self.list_box.append(&row);
 
             items.push(RowItem {
@@ -448,6 +599,7 @@ impl ClipboardWindow {
                 row,
                 search_text,
                 is_fav,
+                kind,
             });
         }
 
@@ -464,22 +616,23 @@ impl ClipboardWindow {
         self.list_box.invalidate_filter();
 
         let state = self.state.borrow();
+        let active_cat = state.active_category;
         let visible_count = state
             .items
             .iter()
-            .filter(|it| query.is_empty() || it.search_text.contains(&query))
+            .filter(|it| item_matches_category(it, active_cat) && (query.is_empty() || it.search_text.contains(&query)))
             .count();
 
         if let Some(first_visible) = state
             .items
             .iter()
-            .find(|it| query.is_empty() || it.search_text.contains(&query))
+            .find(|it| item_matches_category(it, active_cat) && (query.is_empty() || it.search_text.contains(&query)))
         {
             self.list_box.select_row(Some(&first_visible.row));
         }
 
         let msg = if query.is_empty() {
-            format!("{} items", state.items.len())
+            format!("{} items", visible_count)
         } else {
             format!("{} items (filtered from {})", visible_count, state.items.len())
         };
@@ -500,7 +653,7 @@ impl ClipboardWindow {
         row
     }
 
-    fn create_entry_row(self: &Rc<Self>, index: usize, entry: &RingboardEntry) -> (gtk4::ListBoxRow, String) {
+    fn create_entry_row(self: &Rc<Self>, index: usize, entry: &RingboardEntry) -> (gtk4::ListBoxRow, String, ContentKind) {
         let row = gtk4::ListBoxRow::builder().build();
         row.add_css_class("history-card");
 
@@ -531,8 +684,10 @@ impl ClipboardWindow {
                 .starts_with("image/");
 
         let search_text: String;
+        let content_kind: ContentKind;
 
         if is_image {
+            content_kind = ContentKind::Image;
             let mime = entry.mime_type.as_deref().unwrap_or("image/png");
             search_text = format!("image {mime}").to_lowercase();
 
@@ -588,6 +743,9 @@ impl ClipboardWindow {
             let text_str = entry.data.trim();
             search_text = text_str.to_lowercase();
 
+            let (detected_kind, extra_info) = detect_kind(text_str);
+            content_kind = detected_kind;
+
             let lines: Vec<&str> = text_str.lines().collect();
             let mut preview_words = Vec::new();
             for l in lines.iter().take(3) {
@@ -611,7 +769,36 @@ impl ClipboardWindow {
                 .wrap_mode(pango::WrapMode::Char)
                 .build();
             text_lbl.add_css_class("item-text");
+
+            if content_kind == ContentKind::Code {
+                text_lbl.add_css_class("item-code");
+            }
             content_box.append(&text_lbl);
+
+            // Metadata row with optional type badge & color swatch
+            let meta_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+
+            if let Some(ref badge_text) = extra_info {
+                if content_kind == ContentKind::Color {
+                    let swatch = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+                    swatch.add_css_class("color-swatch");
+                    swatch.set_valign(gtk4::Align::Center);
+                    let provider = gtk4::CssProvider::new();
+                    provider.load_from_string(&format!(".swatch-{} {{ background-color: {}; }}", entry.id, text_str));
+                    if let Some(display) = gdk4::Display::default() {
+                        gtk4::style_context_add_provider_for_display(&display, &provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+                    }
+                    swatch.add_css_class(&format!("swatch-{}", entry.id));
+                    meta_box.append(&swatch);
+                }
+
+                let badge_lbl = gtk4::Label::builder()
+                    .label(badge_text)
+                    .valign(gtk4::Align::Center)
+                    .build();
+                badge_lbl.add_css_class("type-badge");
+                meta_box.append(&badge_lbl);
+            }
 
             let char_count = text_str.chars().count();
             let line_count = lines.len();
@@ -623,9 +810,12 @@ impl ClipboardWindow {
             let meta_lbl = gtk4::Label::builder()
                 .label(&meta_str)
                 .xalign(0.0)
+                .valign(gtk4::Align::Center)
                 .build();
             meta_lbl.add_css_class("item-meta");
-            content_box.append(&meta_lbl);
+            meta_box.append(&meta_lbl);
+
+            content_box.append(&meta_box);
         }
 
         box_widget.append(&content_box);
@@ -672,7 +862,7 @@ impl ClipboardWindow {
         box_widget.append(&actions);
         row.set_child(Some(&box_widget));
 
-        (row, search_text)
+        (row, search_text, content_kind)
     }
 
     pub fn present_and_focus(self: &Rc<Self>) {
@@ -690,6 +880,99 @@ impl ClipboardWindow {
     pub fn hide(&self) {
         self.window.set_visible(false);
     }
+}
+
+fn item_matches_category(item: &RowItem, cat: FilterCategory) -> bool {
+    match cat {
+        FilterCategory::All => true,
+        FilterCategory::Favorites => item.is_fav,
+        FilterCategory::Text => item.kind == ContentKind::Text || item.kind == ContentKind::Color,
+        FilterCategory::Code => item.kind == ContentKind::Code,
+        FilterCategory::Links => item.kind == ContentKind::Url,
+        FilterCategory::Images => item.kind == ContentKind::Image,
+    }
+}
+
+fn detect_kind(s: &str) -> (ContentKind, Option<String>) {
+    let trimmed = s.trim();
+
+    // 1. Hex Color
+    if is_hex_color(trimmed) {
+        return (ContentKind::Color, Some(trimmed.to_uppercase()));
+    }
+
+    // 2. URL
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        let domain = extract_domain(trimmed);
+        let badge = if domain.is_empty() {
+            "🌐 Link".to_string()
+        } else {
+            format!("🌐 {domain}")
+        };
+        return (ContentKind::Url, Some(badge));
+    }
+
+    // 3. Code snippet
+    if looks_like_code(trimmed) {
+        return (ContentKind::Code, Some("💻 Code".to_string()));
+    }
+
+    (ContentKind::Text, None)
+}
+
+fn is_hex_color(s: &str) -> bool {
+    let s = s.trim();
+    if !s.starts_with('#') {
+        return false;
+    }
+    let hex = &s[1..];
+    (hex.len() == 3 || hex.len() == 4 || hex.len() == 6 || hex.len() == 8)
+        && hex.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn extract_domain(url: &str) -> String {
+    let s = url.trim();
+    let without_proto = s
+        .strip_prefix("https://")
+        .or_else(|| s.strip_prefix("http://"))
+        .unwrap_or(s);
+    without_proto
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
+fn looks_like_code(s: &str) -> bool {
+    let t = s.trim();
+    if t.contains("fn ")
+        || t.contains("def ")
+        || t.contains("const ")
+        || t.contains("let ")
+        || t.contains("import ")
+        || t.contains("export ")
+        || t.contains("class ")
+        || t.contains("struct ")
+        || t.contains("impl ")
+        || t.contains("SELECT ")
+        || t.contains("FROM ")
+        || t.contains("WHERE ")
+        || t.starts_with("curl ")
+        || t.starts_with("sudo ")
+        || t.starts_with("git ")
+        || t.starts_with("docker ")
+        || t.starts_with("cargo ")
+    {
+        return true;
+    }
+    let lines: Vec<&str> = t.lines().collect();
+    if lines.len() > 1 && (t.contains('{') && t.contains('}')) {
+        return true;
+    }
+    false
 }
 
 fn base64_decode_tolerant(input: &str) -> Result<Vec<u8>, ()> {

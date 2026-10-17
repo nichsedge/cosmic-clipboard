@@ -177,6 +177,61 @@ window.clipboard-window {
     font-size: 11px;
     color: rgba(255, 255, 255, 0.45);
 }
+
+.filter-bar {
+    padding: 0 16px 8px 16px;
+}
+
+.filter-pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: all 80ms ease;
+}
+
+.filter-pill:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    color: #FFFFFF;
+}
+
+.filter-pill.active {
+    background-color: #63D0DF;
+    color: #000000;
+    border-color: #63D0DF;
+    font-weight: 700;
+}
+
+.color-swatch {
+    border-radius: 4px;
+    min-width: 16px;
+    min-height: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    margin-right: 6px;
+}
+
+.type-badge {
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 1px 6px;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.7);
+    margin-right: 6px;
+}
+
+.history-card:selected .type-badge {
+    background: rgba(0, 0, 0, 0.2);
+    color: #000000;
+}
+
+.item-code {
+    font-family: monospace;
+    font-size: 12.5px;
+}
 "#
     .to_string()
 }
@@ -299,6 +354,61 @@ window.clipboard-window {
 .footer-hint {
     font-size: 11px;
     color: alpha(@window_fg_color, 0.4);
+}
+
+.filter-bar {
+    padding: 0 16px 8px 16px;
+}
+
+.filter-pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background-color: alpha(@window_fg_color, 0.05);
+    color: alpha(@window_fg_color, 0.7);
+    border: 1px solid alpha(@window_fg_color, 0.08);
+    transition: all 80ms ease;
+}
+
+.filter-pill:hover {
+    background-color: alpha(@window_fg_color, 0.12);
+    color: @window_fg_color;
+}
+
+.filter-pill.active {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    border-color: @accent_bg_color;
+    font-weight: 700;
+}
+
+.color-swatch {
+    border-radius: 4px;
+    min-width: 16px;
+    min-height: 16px;
+    border: 1px solid alpha(@window_fg_color, 0.25);
+    margin-right: 6px;
+}
+
+.type-badge {
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 1px 6px;
+    background: alpha(@window_fg_color, 0.08);
+    color: alpha(@window_fg_color, 0.7);
+    margin-right: 6px;
+}
+
+.history-card:selected .type-badge {
+    background: alpha(@accent_fg_color, 0.2);
+    color: @accent_fg_color;
+}
+
+.item-code {
+    font-family: monospace;
+    font-size: 12.5px;
 }
 "#
     .to_string()
