@@ -69,6 +69,7 @@ smart_terminal_paste = true  # Automatically switch to Ctrl+Shift+V for terminal
 - CLI / Launcher: `~/.local/bin/cosmic-clipboard`
 - Systemd Resident Daemon: `~/.config/systemd/user/cosmic-clipboard.service`
 - Config File: `~/.config/cosmic-clipboard/config.toml`
+- 1st-Class COSMIC Panel Applet: `~/.local/share/applications/dev.nichsedge.CosmicPanelClipboardButton.desktop` (`X-CosmicApplet=true`)
 - Keybindings:
   - COSMIC: `Super + V` (`com.system76.CosmicSettings.Shortcuts`)
   - GNOME: `Super + V` or `Super + Shift + V`
