@@ -148,8 +148,58 @@ class ClipboardBackend:
     """Interfaces with Ringboard daemon and system clipboard."""
 
     @staticmethod
+    def sync_active_clipboard():
+        """Ensures any recent text or image on Wayland clipboard or GNOME extension is ingested."""
+        # 1. Sync from GNOME extension log if present
+        gnome_log = os.path.expanduser("~/.cache/clipboard-history@alexsaveau.dev/database.log")
+        if os.path.exists(gnome_log):
+            try:
+                subprocess.run(
+                    ["ringboard", "import", "gnome-clipboard-history"],
+                    capture_output=True,
+                    timeout=0.6
+                )
+            except Exception:
+                pass
+
+        # 2. Check if current clipboard has image
+        try:
+            img_res = subprocess.run(
+                ["wl-paste", "--type", "image"],
+                capture_output=True,
+                timeout=0.4
+            )
+            if img_res.returncode == 0 and len(img_res.stdout) > 0:
+                subprocess.run(
+                    ["ringboard", "add", "-m", "image/png", "-"],
+                    input=img_res.stdout,
+                    capture_output=True,
+                    timeout=0.8
+                )
+        except Exception:
+            pass
+
+        # 3. Check if current clipboard has text
+        try:
+            txt_res = subprocess.run(
+                ["wl-paste", "--type", "text"],
+                capture_output=True,
+                timeout=0.4
+            )
+            if txt_res.returncode == 0 and len(txt_res.stdout) > 0:
+                subprocess.run(
+                    ["ringboard", "add", "-"],
+                    input=txt_res.stdout,
+                    capture_output=True,
+                    timeout=0.8
+                )
+        except Exception:
+            pass
+
+    @staticmethod
     def get_entries() -> List[Dict[str, Any]]:
         """Dumps all entries from ringboard."""
+        ClipboardBackend.sync_active_clipboard()
         try:
             p = subprocess.run(
                 ["ringboard", "debug", "dump"],
