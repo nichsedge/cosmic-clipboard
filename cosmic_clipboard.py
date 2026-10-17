@@ -311,14 +311,22 @@ class ClipboardBackend:
             return False
 
     @staticmethod
-    def clear_history(entries: Optional[List[Dict[str, Any]]] = None):
-        """Wipes ONLY non-favorite / unpinned history, keeping pinned entries completely safe."""
+    def clear_history():
+        """Wipes ALL non-favorite / unpinned history from Ringboard, keeping pinned entries completely safe."""
         try:
-            if entries is None:
-                entries = ClipboardBackend.get_entries()
+            p = subprocess.run(
+                ["ringboard", "debug", "dump"],
+                capture_output=True,
+                text=True,
+                timeout=2.0
+            )
+            if p.returncode != 0:
+                return
+
+            raw_entries = json.loads(p.stdout)
             unpinned_ids = [
-                e.get("id") for e in entries
-                if not e.get("favorite") and e.get("id") is not None
+                e["id"] for e in raw_entries
+                if e.get("id", 0) >= FAVORITE_THRESHOLD
             ]
             if not unpinned_ids:
                 return
@@ -329,8 +337,10 @@ class ClipboardBackend:
                 except Exception:
                     pass
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
                 list(executor.map(remove_entry, unpinned_ids))
+
+            subprocess.run(["ringboard", "garbage-collect", "-m", "0"], capture_output=True, timeout=1.0)
         except Exception as err:
             print(f"[ClipboardBackend] Error wiping unpinned history: {err}", file=sys.stderr)
 
@@ -732,7 +742,8 @@ class ClipboardWindow(Adw.ApplicationWindow):
 
         def on_response(dlg, response_id):
             if response_id == "clear":
-                self.backend.clear_history(self.entries)
+                self.backend.clear_history()
+                self.search_entry.set_text("")
                 self.refresh_data()
 
         dialog.connect("response", on_response)
