@@ -303,9 +303,10 @@ impl Backend {
             }
         }
 
-        // Snappy auto-paste trigger after 40ms in background
+        // Auto-paste trigger after focus restoration in background
         thread::spawn(|| {
-            thread::sleep(Duration::from_millis(40));
+            // Give compositor 120ms to unmap clipboard window and return active focus to target app
+            thread::sleep(Duration::from_millis(120));
 
             let mut ydotool_env = std::env::vars().collect::<Vec<_>>();
             if !ydotool_env.iter().any(|(k, _)| k == "YDOTOOL_SOCKET")
@@ -314,9 +315,9 @@ impl Backend {
                 ydotool_env.push(("YDOTOOL_SOCKET".to_string(), "/run/ydotool.socket".to_string()));
             }
 
-            // 1. ydotool (Universal kernel uinput for GNOME and COSMIC)
+            // 1. ydotool with key delay -d 15 so key-down and key-up are properly processed by event loops
             let mut ydo_cmd = Command::new("ydotool");
-            ydo_cmd.args(["key", "29:1", "47:1", "47:0", "29:0"]);
+            ydo_cmd.args(["key", "-d", "15", "29:1", "47:1", "47:0", "29:0"]);
             for (k, v) in &ydotool_env {
                 ydo_cmd.env(k, v);
             }
@@ -326,9 +327,9 @@ impl Backend {
                 }
             }
 
-            // 2. wtype fallback
+            // 2. wtype fallback with delay
             let _ = Command::new("wtype")
-                .args(["-M", "ctrl", "-k", "v", "-m", "ctrl"])
+                .args(["-M", "ctrl", "-d", "20", "-k", "v", "-m", "ctrl"])
                 .output();
         });
     }
