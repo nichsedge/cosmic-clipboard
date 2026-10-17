@@ -11,6 +11,7 @@ import base64
 import subprocess
 import time
 import threading
+import concurrent.futures
 from typing import List, Dict, Optional, Any
 
 import gi
@@ -184,13 +185,28 @@ class ClipboardBackend:
             print(f"[ClipboardBackend] Error removing entry: {err}", file=sys.stderr)
 
     @staticmethod
-    def clear_history():
-        """Wipes non-favorite history."""
+    def clear_history(entries: Optional[List[Dict[str, Any]]] = None):
+        """Wipes ONLY non-favorite / unpinned history, keeping pinned entries completely safe."""
         try:
-            # ringboard wipe removes non-favorites
-            subprocess.run(["ringboard", "wipe"], capture_output=True, check=True)
+            if entries is None:
+                entries = ClipboardBackend.get_entries()
+            unpinned_ids = [
+                e.get("id") for e in entries
+                if not e.get("favorite") and e.get("id") is not None
+            ]
+            if not unpinned_ids:
+                return
+
+            def remove_entry(eid):
+                try:
+                    subprocess.run(["ringboard", "remove", str(eid)], capture_output=True, timeout=1.0)
+                except Exception:
+                    pass
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                list(executor.map(remove_entry, unpinned_ids))
         except Exception as err:
-            print(f"[ClipboardBackend] Error wiping history: {err}", file=sys.stderr)
+            print(f"[ClipboardBackend] Error wiping unpinned history: {err}", file=sys.stderr)
 
     @staticmethod
     def copy_to_clipboard(entry: Dict[str, Any]):
@@ -599,7 +615,7 @@ class ClipboardWindow(Adw.ApplicationWindow):
 
         def on_response(dlg, response_id):
             if response_id == "clear":
-                self.backend.clear_history()
+                self.backend.clear_history(self.entries)
                 self.refresh_data()
 
         dialog.connect("response", on_response)
