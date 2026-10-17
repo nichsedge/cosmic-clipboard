@@ -1,6 +1,8 @@
-mod backend;
-mod theme;
-mod ui;
+pub mod backend;
+pub mod config;
+pub mod theme;
+pub mod tray;
+pub mod ui;
 pub mod window_tracker;
 
 use std::cell::RefCell;
@@ -29,6 +31,13 @@ fn main() -> glib::ExitCode {
         app.connect_startup(move |app| {
             // Keep process resident so hotkey activations are instant (< 2ms)
             *hold_guard.borrow_mut() = Some(app.hold());
+
+            let cfg = config::Config::global();
+
+            // Initialize system tray / top panel indicator if enabled
+            if cfg.general.enable_tray {
+                tray::start_tray();
+            }
 
             // Initialize active window tracking for terminal auto-paste detection
             WindowTracker::global();

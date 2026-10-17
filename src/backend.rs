@@ -147,6 +147,8 @@ impl Backend {
             }
         }
 
+        let limit = crate::config::Config::global().general.history_limit;
+
         // Deduplicate regular entries (excluding items already favorited)
         let mut unique_reg = Vec::new();
         let mut reg_content_set = HashSet::new();
@@ -158,7 +160,7 @@ impl Backend {
             if !reg_content_set.contains(&key) {
                 reg_content_set.insert(key);
                 unique_reg.push(e);
-                if unique_reg.len() >= MAX_HISTORY_ITEMS {
+                if limit > 0 && unique_reg.len() >= limit {
                     break;
                 }
             }
@@ -303,12 +305,19 @@ impl Backend {
             }
         }
 
-        let is_terminal = crate::window_tracker::WindowTracker::global().is_terminal_focused();
+        let cfg = crate::config::Config::global();
+        let is_terminal = if cfg.paste.smart_terminal_paste {
+            crate::window_tracker::WindowTracker::global().is_terminal_focused()
+        } else {
+            false
+        };
+        let paste_delay = cfg.paste.paste_delay_ms;
+        let hold_delay = cfg.paste.key_hold_delay_ms;
 
         // Auto-paste trigger after focus restoration in background
         thread::spawn(move || {
-            // Give compositor 120ms to unmap clipboard window and return active focus to target app
-            thread::sleep(Duration::from_millis(120));
+            // Give compositor configured delay to unmap clipboard window and return active focus to target app
+            thread::sleep(Duration::from_millis(paste_delay));
 
             let mut ydotool_env = std::env::vars().collect::<Vec<_>>();
             if !ydotool_env.iter().any(|(k, _)| k == "YDOTOOL_SOCKET")
@@ -317,14 +326,16 @@ impl Backend {
                 ydotool_env.push(("YDOTOOL_SOCKET".to_string(), "/run/ydotool.socket".to_string()));
             }
 
-            // 1. ydotool with key delay -d 15 so key-down and key-up are properly processed by event loops
+            let hold_str = hold_delay.to_string();
+
+            // 1. ydotool with key delay -d <hold_delay> so key-down and key-up are properly processed
             let mut ydo_cmd = Command::new("ydotool");
             if is_terminal {
                 // Terminals require Ctrl + Shift + V (Keycodes: 29 = Ctrl, 42 = Shift, 47 = V)
-                ydo_cmd.args(["key", "-d", "15", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]);
+                ydo_cmd.args(["key", "-d", &hold_str, "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]);
             } else {
                 // Standard GUI apps require Ctrl + V (Keycodes: 29 = Ctrl, 47 = V)
-                ydo_cmd.args(["key", "-d", "15", "29:1", "47:1", "47:0", "29:0"]);
+                ydo_cmd.args(["key", "-d", &hold_str, "29:1", "47:1", "47:0", "29:0"]);
             }
             for (k, v) in &ydotool_env {
                 ydo_cmd.env(k, v);
@@ -338,9 +349,9 @@ impl Backend {
             // 2. wtype fallback with delay
             let mut wtype_cmd = Command::new("wtype");
             if is_terminal {
-                wtype_cmd.args(["-M", "ctrl", "-M", "shift", "-d", "20", "-k", "v", "-m", "shift", "-m", "ctrl"]);
+                wtype_cmd.args(["-M", "ctrl", "-M", "shift", "-d", &hold_str, "-k", "v", "-m", "shift", "-m", "ctrl"]);
             } else {
-                wtype_cmd.args(["-M", "ctrl", "-d", "20", "-k", "v", "-m", "ctrl"]);
+                wtype_cmd.args(["-M", "ctrl", "-d", &hold_str, "-k", "v", "-m", "ctrl"]);
             }
             let _ = wtype_cmd.output();
         });

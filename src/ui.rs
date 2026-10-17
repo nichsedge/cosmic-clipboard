@@ -58,12 +58,13 @@ pub struct ClipboardWindow {
 impl ClipboardWindow {
     pub fn new(app: &libadwaita::Application) -> Rc<Self> {
         let de = DesktopEnvironment::current();
+        let cfg = crate::config::Config::global();
 
         let window = libadwaita::ApplicationWindow::builder()
             .application(app)
             .title("Clipboard History")
-            .default_width(540)
-            .default_height(620)
+            .default_width(cfg.window.width)
+            .default_height(cfg.window.height)
             .hide_on_close(true)
             .build();
 
@@ -79,7 +80,7 @@ impl ClipboardWindow {
             window.set_anchor(Edge::Bottom, false);
             window.set_anchor(Edge::Left, false);
             window.set_anchor(Edge::Right, false);
-            window.set_margin(Edge::Top, 38);
+            window.set_margin(Edge::Top, cfg.window.margin_top);
             window.set_namespace(Some("cosmic-clipboard"));
         }
 
@@ -141,13 +142,22 @@ impl ClipboardWindow {
             (FilterCategory::Images, "🖼️ Images"),
         ];
 
+        let initial_category = match cfg.general.default_category.to_lowercase().as_str() {
+            "favorites" | "pinned" | "favs" => FilterCategory::Favorites,
+            "text" => FilterCategory::Text,
+            "code" => FilterCategory::Code,
+            "links" | "urls" => FilterCategory::Links,
+            "images" | "pics" => FilterCategory::Images,
+            _ => FilterCategory::All,
+        };
+
         let mut filter_buttons = Vec::new();
         for (cat, label) in categories {
             let btn = gtk4::Button::builder()
                 .label(label)
                 .build();
             btn.add_css_class("filter-pill");
-            if cat == FilterCategory::All {
+            if cat == initial_category {
                 btn.add_css_class("active");
             }
             filter_bar.append(&btn);
@@ -199,7 +209,7 @@ impl ClipboardWindow {
             entries: Vec::new(),
             items: Vec::new(),
             search_query: String::new(),
-            active_category: FilterCategory::All,
+            active_category: initial_category,
             texture_cache: HashMap::new(),
         }));
 

@@ -20,3 +20,5 @@ base64 = "0.22"
 rayon = "1.10"
 cosmic-protocols = { version = "0.2.0", features = ["client"] }
 wayland-client = "0.31.15"
+ksni = { version = "0.3.6", features = ["blocking"] }
+toml = "1.1.8"
