@@ -209,23 +209,47 @@ class ClipboardBackend:
             # Binary image copy via wl-copy
             try:
                 raw_bytes = base64.b64decode(data + '=' * (-len(data) % 4))
-                p = subprocess.Popen(["wl-copy", "--type", entry.get("mime_type", "image/png")], stdin=subprocess.PIPE)
-                p.communicate(input=raw_bytes)
+                mime = entry.get("mime_type", "image/png")
+                subprocess.run(["wl-copy", "--type", mime], input=raw_bytes, check=False)
             except Exception as e:
                 print(f"[ClipboardBackend] Image copy failed: {e}", file=sys.stderr)
         else:
             # Text copy via wl-copy
             try:
-                p = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE, text=True)
-                p.communicate(input=str(data))
+                subprocess.run(["wl-copy"], input=str(data).encode("utf-8"), check=False)
             except Exception as e:
                 print(f"[ClipboardBackend] Text copy failed: {e}", file=sys.stderr)
 
-        # Trigger auto-paste after a slight delay
+        # Trigger auto-paste after window hides and focus returns
         def do_paste():
-            time.sleep(0.12)
+            time.sleep(0.15)
+            env = os.environ.copy()
+            if "YDOTOOL_SOCKET" not in env and os.path.exists("/run/ydotool.socket"):
+                env["YDOTOOL_SOCKET"] = "/run/ydotool.socket"
+
+            # 1. Try ydotool (Universal kernel uinput for GNOME & COSMIC)
             try:
-                subprocess.run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"], capture_output=True)
+                # Keycodes: 29 = KEY_LEFTCTRL, 47 = KEY_V
+                res = subprocess.run(
+                    ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"],
+                    env=env,
+                    capture_output=True,
+                    timeout=1.0
+                )
+                if res.returncode == 0:
+                    return
+            except Exception:
+                pass
+
+            # 2. Try wtype (Wayland virtual keyboard for COSMIC / Niri)
+            try:
+                res = subprocess.run(
+                    ["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"],
+                    capture_output=True,
+                    timeout=1.0
+                )
+                if res.returncode == 0:
+                    return
             except Exception:
                 pass
 
