@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +12,15 @@ use serde::{Deserialize, Serialize};
 
 pub const FAVORITE_THRESHOLD: u64 = 1 << 32; // 4294967296
 pub const MAX_HISTORY_ITEMS: usize = 60;
+
+#[inline]
+fn hash_entry_content(kind: &str, mime: Option<&str>, data: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    kind.hash(&mut hasher);
+    mime.hash(&mut hasher);
+    data.hash(&mut hasher);
+    hasher.finish()
+}
 
 static WAYLAND_WATCHER_ACTIVE: AtomicBool = AtomicBool::new(false);
 static WATCHER_CHECKED: OnceLock<()> = OnceLock::new();
@@ -136,29 +146,27 @@ impl Backend {
         favs_raw.sort_by(|a, b| b.id.cmp(&a.id));
         reg_raw.sort_by(|a, b| b.id.cmp(&a.id));
 
-        // Deduplicate favorites
+        // Deduplicate favorites with zero string cloning
         let mut unique_favs = Vec::new();
         let mut fav_content_set = HashSet::new();
         for e in favs_raw {
-            let key = (e.kind.clone(), e.mime_type.clone(), e.data.clone());
-            if !fav_content_set.contains(&key) {
-                fav_content_set.insert(key);
+            let hash = hash_entry_content(&e.kind, e.mime_type.as_deref(), &e.data);
+            if fav_content_set.insert(hash) {
                 unique_favs.push(e);
             }
         }
 
         let limit = crate::config::Config::global().general.history_limit;
 
-        // Deduplicate regular entries (excluding items already favorited)
+        // Deduplicate regular entries (excluding items already favorited) with zero string cloning
         let mut unique_reg = Vec::new();
         let mut reg_content_set = HashSet::new();
         for e in reg_raw {
-            let key = (e.kind.clone(), e.mime_type.clone(), e.data.clone());
-            if fav_content_set.contains(&key) {
+            let hash = hash_entry_content(&e.kind, e.mime_type.as_deref(), &e.data);
+            if fav_content_set.contains(&hash) {
                 continue;
             }
-            if !reg_content_set.contains(&key) {
-                reg_content_set.insert(key);
+            if reg_content_set.insert(hash) {
                 unique_reg.push(e);
                 if limit > 0 && unique_reg.len() >= limit {
                     break;
@@ -408,6 +416,18 @@ mod tests {
         assert_eq!(entries[0].data, "test text");
         assert_eq!(entries[1].id, 4294971030);
         assert_eq!(entries[1].mime_type.as_deref(), Some("image/png"));
+    }
+
+    #[test]
+    fn test_hash_entry_content_deduplication() {
+        let h1 = hash_entry_content("Human", None, "Hello Antigravity");
+        let h2 = hash_entry_content("Human", None, "Hello Antigravity");
+        let h3 = hash_entry_content("Human", None, "Different Text");
+        let h4 = hash_entry_content("Bytes", Some("image/png"), "Hello Antigravity");
+
+        assert_eq!(h1, h2);
+        assert_ne!(h1, h3);
+        assert_ne!(h1, h4);
     }
 }
 
