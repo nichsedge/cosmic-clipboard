@@ -2,8 +2,13 @@
 name = "cosmic-clipboard"
 version = "0.2.0"
 edition = "2021"
-authors = ["Amal <nichsedge@users.noreply.github.com>"]
+authors = ["nichsedge <nichsedge@users.noreply.github.com>"]
 description = "Native high-performance GTK4/Libadwaita/COSMIC clipboard history manager"
+license = "MIT"
+repository = "https://github.com/nichsedge/cosmic-clipboard"
+readme = "README.md"
+keywords = ["clipboard", "wayland", "cosmic", "gtk4", "libadwaita"]
+categories = ["gui", "command-line-utilities"]
 
 [dependencies]
 gtk4 = { version = "0.11", features = ["v4_16"] }

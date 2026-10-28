@@ -143,8 +143,8 @@ impl Backend {
         }
 
         // Sort descending by ID (newest first)
-        favs_raw.sort_by(|a, b| b.id.cmp(&a.id));
-        reg_raw.sort_by(|a, b| b.id.cmp(&a.id));
+        favs_raw.sort_by_key(|b| std::cmp::Reverse(b.id));
+        reg_raw.sort_by_key(|b| std::cmp::Reverse(b.id));
 
         // Deduplicate favorites with zero string cloning
         let mut unique_favs = Vec::new();

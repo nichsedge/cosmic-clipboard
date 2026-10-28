@@ -112,16 +112,13 @@ impl Dispatch<zcosmic_toplevel_info_v1::ZcosmicToplevelInfoV1, ()> for AppData {
         _: &Connection,
         _: &QueueHandle<AppData>,
     ) {
-        match event {
-            zcosmic_toplevel_info_v1::Event::Toplevel { toplevel } => {
-                app_data.toplevels.push(Toplevel {
-                    handle: toplevel,
-                    title: None,
-                    app_id: None,
-                    state: Vec::new(),
-                });
-            }
-            _ => {}
+        if let zcosmic_toplevel_info_v1::Event::Toplevel { toplevel } = event {
+            app_data.toplevels.push(Toplevel {
+                handle: toplevel,
+                title: None,
+                app_id: None,
+                state: Vec::new(),
+            });
         }
     }
 

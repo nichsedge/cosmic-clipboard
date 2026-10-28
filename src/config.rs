@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub general: GeneralConfig,
@@ -14,16 +14,6 @@ pub struct Config {
     pub window: WindowConfig,
     #[serde(default)]
     pub paste: PasteConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            window: WindowConfig::default(),
-            paste: PasteConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

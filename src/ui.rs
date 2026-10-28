@@ -409,25 +409,23 @@ impl ClipboardWindow {
 
             // 4. 1..9 Quick pick (with Ctrl or when search entry is not focused)
             if let Some(digit) = key_name.chars().next() {
-                if digit.is_ascii_digit() && digit != '0' {
-                    if ctrl || !this.search_entry.has_focus() {
-                        let idx = (digit as usize) - ('1' as usize);
-                        let query = this.state.borrow().search_query.clone();
-                        let active_cat = this.state.borrow().active_category;
-                        let state = this.state.borrow();
-                        let visible_items: Vec<_> = state
-                            .items
-                            .iter()
-                            .filter(|it| item_matches_category(it, active_cat) && (query.is_empty() || it.search_text.contains(&query)))
-                            .collect();
+                if digit.is_ascii_digit() && digit != '0' && (ctrl || !this.search_entry.has_focus()) {
+                    let idx = (digit as usize) - ('1' as usize);
+                    let query = this.state.borrow().search_query.clone();
+                    let active_cat = this.state.borrow().active_category;
+                    let state = this.state.borrow();
+                    let visible_items: Vec<_> = state
+                        .items
+                        .iter()
+                        .filter(|it| item_matches_category(it, active_cat) && (query.is_empty() || it.search_text.contains(&query)))
+                        .collect();
 
-                        if idx < visible_items.len() {
-                            let entry = visible_items[idx].entry.clone();
-                            drop(state);
-                            this.window.set_visible(false);
-                            Backend::copy_to_clipboard(&entry);
-                            return glib::Propagation::Stop;
-                        }
+                    if idx < visible_items.len() {
+                        let entry = visible_items[idx].entry.clone();
+                        drop(state);
+                        this.window.set_visible(false);
+                        Backend::copy_to_clipboard(&entry);
+                        return glib::Propagation::Stop;
                     }
                 }
             }
@@ -640,11 +638,7 @@ impl ClipboardWindow {
         let box_widget = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
 
         // Number Badge
-        let badge_text = if index <= 9 {
-            format!("{index}")
-        } else {
-            format!("{index}")
-        };
+        let badge_text = format!("{index}");
         let badge = gtk4::Label::builder()
             .label(&badge_text)
             .valign(gtk4::Align::Center)
@@ -702,9 +696,9 @@ impl ClipboardWindow {
                 picture.add_css_class("thumbnail-frame");
                 img_box.append(&picture);
 
-                let subtype = mime.split('/').last().unwrap_or("png").to_uppercase();
+                let subtype = mime.split('/').next_back().unwrap_or("png").to_uppercase();
                 let meta_lbl = gtk4::Label::builder()
-                    .label(&format!("Image ({subtype}) • {w}×{h}"))
+                    .label(format!("Image ({subtype}) • {w}×{h}"))
                     .xalign(0.0)
                     .valign(gtk4::Align::Center)
                     .build();
